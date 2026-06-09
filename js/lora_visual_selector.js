@@ -491,52 +491,26 @@ function createInlineGallery(node) {
             let errorCount = 0;
             
             for (const file of files) {
-                // 从文件名提取 LoRA 名称
                 const fileName = file.name;
+                // 移除图片扩展名
                 const baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
                 
-                console.log(`Processing file: ${fileName}, baseName: ${baseName}`);
+                console.log(`Processing: ${fileName}`);
                 
-                // 尝试匹配 LoRA
+                // 简单的模糊匹配：只要文件名包含 LoRA 名称（去掉扩展名）
                 const matchedLora = state.items.find(item => {
-                    const loraName = item.name;
-                    const loraBaseName = loraName.replace(/\.(safetensors|ckpt|pt)$/i, "");
-                    
-                    // 多种匹配策略：
-                    // 1. 精确匹配（去除扩展名）
-                    if (loraBaseName === baseName) {
-                        console.log(`  Matched by exact match: ${loraName}`);
-                        return true;
-                    }
-                    
-                    // 2. 文件名包含完整 LoRA 文件名（如 typehatena_V2_epoch8.safetensors_00001_.png）
-                    if (baseName.startsWith(loraName)) {
-                        console.log(`  Matched by full name prefix: ${loraName}`);
-                        return true;
-                    }
-                    
-                    // 3. 文件名包含 LoRA 基础名（如 typehatena_V2_epoch8_00001_.png）
-                    if (baseName.startsWith(loraBaseName)) {
-                        console.log(`  Matched by base name prefix: ${loraName}`);
-                        return true;
-                    }
-                    
-                    // 4. 部分匹配（文件名或 LoRA 名包含另一个）
-                    if (baseName.includes(loraBaseName) || loraBaseName.includes(baseName)) {
-                        console.log(`  Matched by partial match: ${loraName}`);
-                        return true;
-                    }
-                    
-                    return false;
+                    const loraBaseName = item.name.replace(/\.(safetensors|ckpt|pt)$/i, "");
+                    // 文件名包含 LoRA 名称，或 LoRA 名称包含文件名
+                    return baseName.includes(loraBaseName) || loraBaseName.includes(baseName);
                 });
                 
                 if (!matchedLora) {
-                    console.log(`  ❌ No matching LoRA found for: ${fileName}`);
+                    console.log(`  ❌ No match found`);
                     skipCount++;
                     continue;
                 }
                 
-                console.log(`  ✓ Matched to: ${matchedLora.name}`);
+                console.log(`  ✓ Matched: ${matchedLora.name}`);
                 
                 // 上传图片
                 const form = new FormData();
