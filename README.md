@@ -24,7 +24,8 @@ ComfyUI/custom_nodes
 thumbnails/lora_visual_selector
 ```
 
-<img width="1065" height="1100" alt="image" src="https://github.com/user-attachments/assets/384a0a81-3a5d-4ae6-b204-13cccad7d096" />
 
 
 
+
+<img width="840" height="1060" alt="a5cef35e-6c62-4fd6-a1f2-783cfa47da08" src="https://github.com/user-attachments/assets/11b1f821-bdb8-45a5-93b9-d56edd0dd6a7" />
