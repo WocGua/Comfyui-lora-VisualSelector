@@ -34,7 +34,7 @@ function injectStyle() {
 }
 .lvs-toolbar {
     display: grid;
-    grid-template-columns: 34px 34px 1fr 40px 40px;
+    grid-template-columns: 34px 34px minmax(120px, 180px) 1fr 40px 40px;
     gap: 9px;
     align-items: center;
     padding: 10px 12px 8px;
@@ -59,6 +59,18 @@ function injectStyle() {
 }
 .lvs-search-wrap {
     position: relative;
+}
+.lvs-folder {
+    width: 100%;
+    height: 34px;
+    box-sizing: border-box;
+    border: 1px solid #060606;
+    border-radius: 7px;
+    background: #08090c;
+    color: #f4f4f4;
+    padding: 0 9px;
+    font-size: 13px;
+    outline: none;
 }
 .lvs-search {
     width: 100%;
@@ -261,6 +273,27 @@ function saveSelected(node, selected) {
     node.setDirtyCanvas(true, true);
 }
 
+function getFolderName(item) {
+    const parts = item.name.split(/[\\/]/);
+    return parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+}
+
+function getFolders(items) {
+    return [...new Set(items.map(getFolderName))]
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function getVisibleItems(state) {
+    const normalizedQuery = state.query.trim().toLowerCase();
+    return state.items.filter((item) => {
+        const matchesFolder = !state.folder || getFolderName(item) === state.folder;
+        const matchesQuery = !normalizedQuery
+            || item.name.toLowerCase().includes(normalizedQuery)
+            || item.label.toLowerCase().includes(normalizedQuery);
+        return matchesFolder && matchesQuery;
+    });
+}
+
 async function fetchItems(force = false) {
     if (cachedItems && !force) {
         return cachedItems;
@@ -316,7 +349,7 @@ function uploadThumbnail(item, afterUpload) {
 }
 
 function renderGrid(state) {
-    const { node, grid, items, selectedSet, query, countButton } = state;
+    const { node, grid, items, selectedSet, countButton } = state;
     grid.textContent = "";
     
     // Update count button
@@ -324,10 +357,7 @@ function renderGrid(state) {
         countButton.textContent = String(selectedSet.size);
     }
 
-    const normalizedQuery = query.trim().toLowerCase();
-    const visible = normalizedQuery
-        ? items.filter((item) => item.name.toLowerCase().includes(normalizedQuery) || item.label.toLowerCase().includes(normalizedQuery))
-        : items;
+    const visible = getVisibleItems(state);
 
     if (!visible.length) {
         const empty = document.createElement("div");
@@ -404,7 +434,10 @@ function createInlineGallery(node) {
     toolbar.className = "lvs-toolbar";
 
     const clearButton = createIconButton("Clear selection", "x");
-    const batchUploadButton = createIconButton("Batch import thumbnails", "↑");
+    const selectAllButton = createIconButton("Select all visible LoRAs", "all");
+    const folderSelect = document.createElement("select");
+    folderSelect.className = "lvs-folder";
+    folderSelect.title = "Choose LoRA folder";
     const searchWrap = document.createElement("div");
     searchWrap.className = "lvs-search-wrap";
     const searchIcon = document.createElement("span");
@@ -417,7 +450,7 @@ function createInlineGallery(node) {
 
     const refreshButton = createIconButton("Refresh LoRA list", "r");
     const countButton = createIconButton("Selected count", "0");
-    toolbar.append(clearButton, batchUploadButton, searchWrap, refreshButton, countButton);
+    toolbar.append(clearButton, selectAllButton, folderSelect, searchWrap, refreshButton, countButton);
 
     const grid = document.createElement("div");
     grid.className = "lvs-grid";
@@ -434,7 +467,29 @@ function createInlineGallery(node) {
         items: [],
         selectedSet: new Set(getSelected(node)),
         query: "",
+        folder: "",
         countButton,
+    };
+
+    const updateFolderOptions = () => {
+        const folders = getFolders(state.items);
+        const current = state.folder;
+        folderSelect.textContent = "";
+
+        const allOption = document.createElement("option");
+        allOption.value = "";
+        allOption.textContent = "All folders";
+        folderSelect.appendChild(allOption);
+
+        for (const folder of folders) {
+            const option = document.createElement("option");
+            option.value = folder;
+            option.textContent = folder || "Root";
+            folderSelect.appendChild(option);
+        }
+
+        state.folder = folders.includes(current) ? current : "";
+        folderSelect.value = state.folder;
     };
 
     const reload = async (force = false) => {
@@ -445,6 +500,7 @@ function createInlineGallery(node) {
         grid.appendChild(reloading);
         try {
             state.items = await fetchItems(force);
+            updateFolderOptions();
             const validNames = new Set(state.items.map((item) => item.name));
             state.selectedSet = new Set([...state.selectedSet].filter((name) => validNames.has(name)));
             saveSelected(node, [...state.selectedSet]);
@@ -469,104 +525,23 @@ function createInlineGallery(node) {
         state.query = search.value;
         rerender();
     });
+    folderSelect.addEventListener("change", () => {
+        state.folder = folderSelect.value;
+        rerender();
+    });
     clearButton.addEventListener("click", () => {
         state.selectedSet.clear();
         saveSelected(node, []);
         rerender();
     });
-    refreshButton.addEventListener("click", () => reload(true));
-    
-    batchUploadButton.addEventListener("click", () => {
-        // 先打印所有 LoRA 名称用于调试
-        console.log("=== Available LoRAs ===");
-        state.items.forEach(item => {
-            console.log(`  ${item.name}`);
-        });
-        console.log("======================");
-        
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = "image/png,image/jpeg,image/webp,image/gif";
-        input.multiple = true;
-        
-        input.addEventListener("change", async () => {
-            const files = Array.from(input.files || []);
-            if (!files.length) return;
-            
-            let successCount = 0;
-            let skipCount = 0;
-            let errorCount = 0;
-            
-            for (const file of files) {
-                const fileName = file.name;
-                // 移除图片扩展名
-                let baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
-                // 移除 .safetensors/.ckpt/.pt 扩展名（如果有）
-                baseName = baseName.replace(/\.(safetensors|ckpt|pt)/gi, "");
-                // 移除末尾的数字编号（如 _00001_）
-                baseName = baseName.replace(/[_-]\d+[_-]*$/g, "");
-                
-                console.log(`Processing: ${fileName}`);
-                console.log(`  Cleaned name: ${baseName}`);
-                
-                // 简单的模糊匹配
-                const matchedLora = state.items.find(item => {
-                    const loraBaseName = item.name.replace(/\.(safetensors|ckpt|pt)$/i, "");
-                    const match = baseName.toLowerCase().includes(loraBaseName.toLowerCase()) || 
-                                  loraBaseName.toLowerCase().includes(baseName.toLowerCase());
-                    if (match) {
-                        console.log(`  Testing ${item.name}: MATCH`);
-                    }
-                    return match;
-                });
-                
-                if (!matchedLora) {
-                    console.log(`  ❌ No match found`);
-                    skipCount++;
-                    continue;
-                }
-                
-                console.log(`  ✓ Matched: ${matchedLora.name}`);
-                
-                // 上传图片
-                const form = new FormData();
-                form.append("lora_name", matchedLora.name);
-                form.append("image", file, file.name);
-                
-                try {
-                    const response = await fetch("/lora_visual_selector/upload", {
-                        method: "POST",
-                        body: form,
-                    });
-                    
-                    if (response.ok) {
-                        const payload = await response.json();
-                        matchedLora.thumbnail = payload.thumbnail;
-                        matchedLora.thumbnailVersion = Date.now();
-                        successCount++;
-                        console.log(`Successfully uploaded thumbnail for: ${matchedLora.name}`);
-                    } else {
-                        errorCount++;
-                        console.error(`Failed to upload ${fileName}`);
-                    }
-                } catch (error) {
-                    errorCount++;
-                    console.error(`Error uploading ${fileName}:`, error);
-                }
-            }
-            
-            // 更新显示
-            cachedItems = state.items;
-            renderGrid(state);
-            
-            // 显示结果
-            const message = `Batch upload completed:\n✓ Success: ${successCount}\n⊘ Skipped: ${skipCount}\n✗ Failed: ${errorCount}`;
-            alert(message);
-        });
-        
-        input.click();
+    selectAllButton.addEventListener("click", () => {
+        for (const item of getVisibleItems(state)) {
+            state.selectedSet.add(item.name);
+        }
+        saveSelected(node, [...state.selectedSet]);
+        rerender();
     });
-
+    refreshButton.addEventListener("click", () => reload(true));
     if (typeof node.addDOMWidget === "function") {
         const widget = node.addDOMWidget("lora_gallery", "lora_gallery", root, {
             serialize: false,
