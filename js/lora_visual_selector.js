@@ -477,6 +477,13 @@ function createInlineGallery(node) {
     refreshButton.addEventListener("click", () => reload(true));
     
     batchUploadButton.addEventListener("click", () => {
+        // 先打印所有 LoRA 名称用于调试
+        console.log("=== Available LoRAs ===");
+        state.items.forEach(item => {
+            console.log(`  ${item.name}`);
+        });
+        console.log("======================");
+        
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "image/png,image/jpeg,image/webp,image/gif";
@@ -493,15 +500,24 @@ function createInlineGallery(node) {
             for (const file of files) {
                 const fileName = file.name;
                 // 移除图片扩展名
-                const baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
+                let baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
+                // 移除 .safetensors/.ckpt/.pt 扩展名（如果有）
+                baseName = baseName.replace(/\.(safetensors|ckpt|pt)/gi, "");
+                // 移除末尾的数字编号（如 _00001_）
+                baseName = baseName.replace(/[_-]\d+[_-]*$/g, "");
                 
                 console.log(`Processing: ${fileName}`);
+                console.log(`  Cleaned name: ${baseName}`);
                 
-                // 简单的模糊匹配：只要文件名包含 LoRA 名称（去掉扩展名）
+                // 简单的模糊匹配
                 const matchedLora = state.items.find(item => {
                     const loraBaseName = item.name.replace(/\.(safetensors|ckpt|pt)$/i, "");
-                    // 文件名包含 LoRA 名称，或 LoRA 名称包含文件名
-                    return baseName.includes(loraBaseName) || loraBaseName.includes(baseName);
+                    const match = baseName.toLowerCase().includes(loraBaseName.toLowerCase()) || 
+                                  loraBaseName.toLowerCase().includes(baseName.toLowerCase());
+                    if (match) {
+                        console.log(`  Testing ${item.name}: MATCH`);
+                    }
+                    return match;
                 });
                 
                 if (!matchedLora) {
