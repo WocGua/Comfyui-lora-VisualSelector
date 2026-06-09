@@ -34,7 +34,7 @@ function injectStyle() {
 }
 .lvs-toolbar {
     display: grid;
-    grid-template-columns: 34px 1fr 40px 40px;
+    grid-template-columns: 34px 34px 1fr 40px 40px;
     gap: 9px;
     align-items: center;
     padding: 10px 12px 8px;
@@ -404,6 +404,7 @@ function createInlineGallery(node) {
     toolbar.className = "lvs-toolbar";
 
     const clearButton = createIconButton("Clear selection", "x");
+    const batchUploadButton = createIconButton("Batch import thumbnails", "↑");
     const searchWrap = document.createElement("div");
     searchWrap.className = "lvs-search-wrap";
     const searchIcon = document.createElement("span");
@@ -416,7 +417,7 @@ function createInlineGallery(node) {
 
     const refreshButton = createIconButton("Refresh LoRA list", "r");
     const countButton = createIconButton("Selected count", "0");
-    toolbar.append(clearButton, searchWrap, refreshButton, countButton);
+    toolbar.append(clearButton, batchUploadButton, searchWrap, refreshButton, countButton);
 
     const grid = document.createElement("div");
     grid.className = "lvs-grid";
@@ -474,6 +475,86 @@ function createInlineGallery(node) {
         rerender();
     });
     refreshButton.addEventListener("click", () => reload(true));
+    
+    batchUploadButton.addEventListener("click", () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/png,image/jpeg,image/webp,image/gif";
+        input.multiple = true;
+        
+        input.addEventListener("change", async () => {
+            const files = Array.from(input.files || []);
+            if (!files.length) return;
+            
+            let successCount = 0;
+            let skipCount = 0;
+            let errorCount = 0;
+            
+            for (const file of files) {
+                // 从文件名提取 LoRA 名称（去除扩展名）
+                const fileName = file.name;
+                const baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
+                
+                // 尝试匹配 LoRA
+                const matchedLora = state.items.find(item => {
+                    const loraBaseName = item.name.replace(/\.(safetensors|ckpt|pt)$/i, "");
+                    // 精确匹配或文件名包含 LoRA 名称
+                    return loraBaseName === baseName || 
+                           baseName.includes(loraBaseName) ||
+                           loraBaseName.includes(baseName);
+                });
+                
+                if (!matchedLora) {
+                    console.log(`No matching LoRA found for: ${fileName}`);
+                    skipCount++;
+                    continue;
+                }
+                
+                // 检查是否已有缩略图
+                if (matchedLora.thumbnail) {
+                    console.log(`LoRA ${matchedLora.name} already has thumbnail, skipping`);
+                    skipCount++;
+                    continue;
+                }
+                
+                // 上传图片
+                const form = new FormData();
+                form.append("lora_name", matchedLora.name);
+                form.append("image", file, file.name);
+                
+                try {
+                    const response = await fetch("/lora_visual_selector/upload", {
+                        method: "POST",
+                        body: form,
+                    });
+                    
+                    if (response.ok) {
+                        const payload = await response.json();
+                        matchedLora.thumbnail = payload.thumbnail;
+                        matchedLora.thumbnailVersion = Date.now();
+                        successCount++;
+                        console.log(`Successfully uploaded thumbnail for: ${matchedLora.name}`);
+                    } else {
+                        errorCount++;
+                        console.error(`Failed to upload ${fileName}`);
+                    }
+                } catch (error) {
+                    errorCount++;
+                    console.error(`Error uploading ${fileName}:`, error);
+                }
+            }
+            
+            // 更新显示
+            cachedItems = state.items;
+            renderGrid(state);
+            
+            // 显示结果
+            const message = `Batch upload completed:\n✓ Success: ${successCount}\n⊘ Skipped: ${skipCount}\n✗ Failed: ${errorCount}`;
+            alert(message);
+        });
+        
+        input.click();
+    });
 
     if (typeof node.addDOMWidget === "function") {
         const widget = node.addDOMWidget("lora_gallery", "lora_gallery", root, {
