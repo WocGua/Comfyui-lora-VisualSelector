@@ -7,7 +7,7 @@
 把本文件夹放到：
 
 ```text
-ComfyUI/custom_nodes/comfyui-lora-Management
+ComfyUI/custom_nodes
 ```
 
 然后重启 ComfyUI。
