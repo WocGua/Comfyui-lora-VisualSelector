@@ -316,8 +316,13 @@ function uploadThumbnail(item, afterUpload) {
 }
 
 function renderGrid(state) {
-    const { node, grid, items, selectedSet, query } = state;
+    const { node, grid, items, selectedSet, query, countButton } = state;
     grid.textContent = "";
+    
+    // Update count button
+    if (countButton) {
+        countButton.textContent = String(selectedSet.size);
+    }
 
     const normalizedQuery = query.trim().toLowerCase();
     const visible = normalizedQuery
@@ -428,6 +433,7 @@ function createInlineGallery(node) {
         items: [],
         selectedSet: new Set(getSelected(node)),
         query: "",
+        countButton,
     };
 
     const reload = async (force = false) => {
