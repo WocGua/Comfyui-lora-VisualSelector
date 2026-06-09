@@ -491,17 +491,29 @@ function createInlineGallery(node) {
             let errorCount = 0;
             
             for (const file of files) {
-                // 从文件名提取 LoRA 名称（去除扩展名）
+                // 从文件名提取 LoRA 名称
                 const fileName = file.name;
                 const baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
                 
                 // 尝试匹配 LoRA
                 const matchedLora = state.items.find(item => {
-                    const loraBaseName = item.name.replace(/\.(safetensors|ckpt|pt)$/i, "");
-                    // 精确匹配或文件名包含 LoRA 名称
-                    return loraBaseName === baseName || 
-                           baseName.includes(loraBaseName) ||
-                           loraBaseName.includes(baseName);
+                    const loraName = item.name;
+                    const loraBaseName = loraName.replace(/\.(safetensors|ckpt|pt)$/i, "");
+                    
+                    // 多种匹配策略：
+                    // 1. 精确匹配（去除扩展名）
+                    if (loraBaseName === baseName) return true;
+                    
+                    // 2. 文件名包含完整 LoRA 文件名（如 typehatena_V2_epoch8.safetensors_00001_.png）
+                    if (baseName.startsWith(loraName)) return true;
+                    
+                    // 3. 文件名包含 LoRA 基础名（如 typehatena_V2_epoch8_00001_.png）
+                    if (baseName.startsWith(loraBaseName)) return true;
+                    
+                    // 4. 部分匹配（文件名或 LoRA 名包含另一个）
+                    if (baseName.includes(loraBaseName) || loraBaseName.includes(baseName)) return true;
+                    
+                    return false;
                 });
                 
                 if (!matchedLora) {
