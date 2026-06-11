@@ -51,4 +51,5 @@ metadata/lora_prompts.json
 
 
 
-<img width="840" height="1060" alt="a5cef35e-6c62-4fd6-a1f2-783cfa47da08" src="https://github.com/user-attachments/assets/11b1f821-bdb8-45a5-93b9-d56edd0dd6a7" />
+<img width="950" height="1020" alt="image" src="https://github.com/user-attachments/assets/5215464b-c1ad-435f-ab52-49b8efe890d2" />
+
