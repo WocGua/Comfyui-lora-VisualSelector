@@ -4,6 +4,10 @@ const EXTENSION_NAME = "comfyui.lora_visual_selector";
 const NODE_NAME = "LoraVisualSelector";
 const GRID_WIDTH = 840;
 const GRID_HEIGHT = 640;
+const NODE_EXTRA_HEIGHT = 190;
+const NODE_WIDTH_PADDING = 28;
+const MIN_WIDGET_WIDTH = 400;
+const MIN_WIDGET_HEIGHT = 300;
 
 let cachedItems = null;
 
@@ -34,7 +38,7 @@ function injectStyle() {
 }
 .lvs-toolbar {
     display: grid;
-    grid-template-columns: 34px 34px minmax(120px, 180px) 1fr 40px 40px;
+    grid-template-columns: 34px 34px 34px minmax(120px, 180px) 1fr 40px 40px;
     gap: 9px;
     align-items: center;
     padding: 10px 12px 8px;
@@ -212,6 +216,90 @@ function injectStyle() {
 .lvs-card:focus-within .lvs-upload {
     opacity: 1;
 }
+.lvs-prompt-button {
+    position: absolute;
+    left: 6px;
+    top: 36px;
+    height: 24px;
+    min-width: 24px;
+    padding: 0 7px;
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.64);
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0;
+}
+.lvs-card:hover .lvs-prompt-button,
+.lvs-card:focus-within .lvs-prompt-button,
+.lvs-card.has-prompt .lvs-prompt-button {
+    opacity: 1;
+}
+.lvs-card.has-prompt .lvs-prompt-button {
+    border-color: #f0d66c;
+    color: #ffe88a;
+}
+.lvs-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.62);
+}
+.lvs-dialog {
+    width: min(680px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid #696969;
+    border-radius: 8px;
+    background: #202020;
+    color: #f4f4f4;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.lvs-dialog-title {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.35;
+}
+.lvs-dialog textarea {
+    width: 100%;
+    min-height: 180px;
+    box-sizing: border-box;
+    resize: vertical;
+    border: 1px solid #555;
+    border-radius: 6px;
+    background: #101010;
+    color: #f4f4f4;
+    padding: 10px;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    outline: none;
+}
+.lvs-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.lvs-dialog-actions button {
+    min-width: 72px;
+    height: 32px;
+    border: 1px solid #666;
+    border-radius: 6px;
+    background: #303030;
+    color: #f4f4f4;
+    cursor: pointer;
+}
+.lvs-dialog-actions button:hover {
+    background: #3d3d3d;
+}
+.lvs-dialog-actions .is-primary {
+    border-color: #76bd73;
+    background: #2f6f35;
+}
 .lvs-empty,
 .lvs-loading {
     grid-column: 1 / -1;
@@ -243,6 +331,31 @@ function hideWidgetByName(node, name) {
     hideWidget(getWidget(node, name));
 }
 
+function syncNodeLayout(node, widgetSize = {}) {
+    const widgetWidth = widgetSize.width || GRID_WIDTH;
+    const widgetHeight = widgetSize.height || GRID_HEIGHT;
+    const extraHeight = widgetSize.extraHeight || NODE_EXTRA_HEIGHT;
+    const desiredSize = [widgetWidth + NODE_WIDTH_PADDING, widgetHeight + extraHeight];
+    let computedSize = desiredSize;
+
+    if (typeof node.computeSize === "function") {
+        computedSize = node.computeSize();
+    }
+
+    const nextSize = [
+        Math.max(desiredSize[0], computedSize?.[0] || 0),
+        Math.max(desiredSize[1], computedSize?.[1] || 0),
+    ];
+
+    if (typeof node.setSize === "function") {
+        node.setSize(nextSize);
+    } else {
+        node.size = nextSize;
+    }
+
+    node.setDirtyCanvas?.(true, true);
+}
+
 function parseSelected(value) {
     if (!value) {
         return [];
@@ -251,8 +364,19 @@ function parseSelected(value) {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed)) {
             return parsed
-                .map((item) => (typeof item === "string" ? item : item?.name))
-                .filter(Boolean);
+                .map((item) => {
+                    if (typeof item === "string") {
+                        return { name: item, prompt: "" };
+                    }
+                    if (!item?.name) {
+                        return null;
+                    }
+                    return {
+                        name: String(item.name),
+                        prompt: typeof item.prompt === "string" ? item.prompt : "",
+                    };
+                })
+                .filter((item) => item?.name);
         }
     } catch (error) {
         return [];
@@ -261,15 +385,27 @@ function parseSelected(value) {
 }
 
 function getSelected(node) {
-    return parseSelected(getWidget(node, "selected_loras")?.value);
+    return parseSelected(getWidget(node, "selected_loras")?.value).map((item) => item.name);
 }
 
-function saveSelected(node, selected) {
+function getSelectedPrompts(node) {
+    return new Map(
+        parseSelected(getWidget(node, "selected_loras")?.value)
+            .filter((item) => item.prompt)
+            .map((item) => [item.name, item.prompt])
+    );
+}
+
+function saveSelected(node, selected, items = [], selectedPrompts = new Map()) {
     const widget = getWidget(node, "selected_loras");
     if (!widget) {
         return;
     }
-    widget.value = JSON.stringify(selected.map((name) => ({ name })));
+    const itemPrompts = new Map(items.map((item) => [item.name, item.prompt || ""]));
+    widget.value = JSON.stringify(selected.map((name) => {
+        const prompt = itemPrompts.get(name) || selectedPrompts.get(name) || "";
+        return prompt ? { name, prompt } : { name };
+    }));
     node.setDirtyCanvas(true, true);
 }
 
@@ -289,7 +425,8 @@ function getVisibleItems(state) {
         const matchesFolder = !state.folder || getFolderName(item) === state.folder;
         const matchesQuery = !normalizedQuery
             || item.name.toLowerCase().includes(normalizedQuery)
-            || item.label.toLowerCase().includes(normalizedQuery);
+            || item.label.toLowerCase().includes(normalizedQuery)
+            || (item.prompt || "").toLowerCase().includes(normalizedQuery);
         return matchesFolder && matchesQuery;
     });
 }
@@ -348,6 +485,175 @@ function uploadThumbnail(item, afterUpload) {
     input.click();
 }
 
+async function savePrompt(item, prompt) {
+    const response = await fetch("/lora_visual_selector/prompt", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            lora_name: item.name,
+            prompt,
+        }),
+    });
+
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Prompt save failed.");
+    }
+
+    return response.json();
+}
+
+function editPrompt(item, state) {
+    const backdrop = document.createElement("div");
+    backdrop.className = "lvs-dialog-backdrop";
+
+    const dialog = document.createElement("div");
+    dialog.className = "lvs-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+
+    const title = document.createElement("div");
+    title.className = "lvs-dialog-title";
+    title.textContent = item.label;
+    title.title = item.name;
+
+    const textarea = document.createElement("textarea");
+    textarea.value = item.prompt || "";
+    textarea.placeholder = "Built-in prompt / trigger words";
+
+    const actions = document.createElement("div");
+    actions.className = "lvs-dialog-actions";
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.textContent = "Cancel";
+
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.className = "is-primary";
+    saveButton.textContent = "Save";
+
+    const close = () => backdrop.remove();
+    cancelButton.addEventListener("click", close);
+    backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) {
+            close();
+        }
+    });
+    dialog.addEventListener("click", (event) => event.stopPropagation());
+    textarea.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+            close();
+        }
+    });
+
+    saveButton.addEventListener("click", async () => {
+        const prompt = textarea.value.trim();
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving";
+        try {
+            const payload = await savePrompt(item, prompt);
+            item.prompt = payload.prompt || "";
+            state.selectedPrompts.set(item.name, item.prompt);
+            if (!item.prompt) {
+                state.selectedPrompts.delete(item.name);
+            }
+            cachedItems = state.items;
+            if (state.selectedSet.has(item.name)) {
+                saveSelected(state.node, [...state.selectedSet], state.items, state.selectedPrompts);
+            }
+            close();
+            renderGrid(state);
+        } catch (error) {
+            alert(error.message || "Prompt save failed.");
+            saveButton.disabled = false;
+            saveButton.textContent = "Save";
+        }
+    });
+
+    actions.append(cancelButton, saveButton);
+    dialog.append(title, textarea, actions);
+    backdrop.appendChild(dialog);
+    document.body.appendChild(backdrop);
+    textarea.focus();
+    textarea.select();
+}
+
+function findLoraForImage(items, fileName) {
+    let baseName = fileName.replace(/\.(png|jpg|jpeg|webp|gif)$/i, "");
+    baseName = baseName.replace(/\.(safetensors|ckpt|pt)$/i, "");
+    baseName = baseName.replace(/[_-]\d+[_-]*$/g, "");
+    const normalizedBase = baseName.toLowerCase();
+
+    return items.find((item) => {
+        const loraPathName = item.name.replace(/\.(safetensors|ckpt|pt)$/i, "").toLowerCase();
+        const loraFileName = loraPathName.split(/[\\/]/).pop() || loraPathName;
+        return normalizedBase.includes(loraFileName)
+            || loraFileName.includes(normalizedBase)
+            || normalizedBase.includes(loraPathName)
+            || loraPathName.includes(normalizedBase);
+    });
+}
+
+function batchUploadThumbnails(state) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp,image/gif";
+    input.multiple = true;
+
+    input.addEventListener("change", async () => {
+        const files = Array.from(input.files || []);
+        if (!files.length) {
+            return;
+        }
+
+        let successCount = 0;
+        let skipCount = 0;
+        let errorCount = 0;
+
+        for (const file of files) {
+            const matchedLora = findLoraForImage(state.items, file.name);
+            if (!matchedLora) {
+                console.log(`No matching LoRA found for thumbnail: ${file.name}`);
+                skipCount++;
+                continue;
+            }
+
+            const form = new FormData();
+            form.append("lora_name", matchedLora.name);
+            form.append("image", file, file.name);
+
+            try {
+                const response = await fetch("/lora_visual_selector/upload", {
+                    method: "POST",
+                    body: form,
+                });
+
+                if (!response.ok) {
+                    errorCount++;
+                    continue;
+                }
+
+                const payload = await response.json();
+                matchedLora.thumbnail = payload.thumbnail;
+                matchedLora.thumbnailVersion = Date.now();
+                successCount++;
+            } catch (error) {
+                errorCount++;
+                console.error(`Error uploading ${file.name}:`, error);
+            }
+        }
+
+        cachedItems = state.items;
+        renderGrid(state);
+        alert(`Batch upload completed:\nSuccess: ${successCount}\nSkipped: ${skipCount}\nFailed: ${errorCount}`);
+    });
+
+    input.click();
+}
+
 function renderGrid(state) {
     const { node, grid, items, selectedSet, countButton } = state;
     grid.textContent = "";
@@ -369,9 +675,9 @@ function renderGrid(state) {
 
     for (const item of visible) {
         const card = document.createElement("button");
-        card.className = `lvs-card${selectedSet.has(item.name) ? " is-selected" : ""}`;
+        card.className = `lvs-card${selectedSet.has(item.name) ? " is-selected" : ""}${item.prompt ? " has-prompt" : ""}`;
         card.type = "button";
-        card.title = item.name;
+        card.title = item.prompt ? `${item.name}\n\n${item.prompt}` : item.name;
 
         const preview = document.createElement("div");
         preview.className = "lvs-preview";
@@ -410,14 +716,24 @@ function renderGrid(state) {
             });
         });
 
-        card.append(preview, label, check, upload);
+        const promptButton = document.createElement("button");
+        promptButton.className = "lvs-prompt-button";
+        promptButton.type = "button";
+        promptButton.textContent = item.prompt ? "P*" : "P";
+        promptButton.title = item.prompt ? "Edit built-in prompt" : "Add built-in prompt";
+        promptButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            editPrompt(item, state);
+        });
+
+        card.append(preview, label, check, upload, promptButton);
         card.addEventListener("click", () => {
             if (selectedSet.has(item.name)) {
                 selectedSet.delete(item.name);
             } else {
                 selectedSet.add(item.name);
             }
-            saveSelected(node, [...selectedSet]);
+            saveSelected(node, [...selectedSet], state.items, state.selectedPrompts);
             renderGrid(state);
         });
         grid.appendChild(card);
@@ -429,11 +745,30 @@ function createInlineGallery(node) {
 
     const root = document.createElement("div");
     root.className = "lvs-inline";
+    const widgetSize = {
+        width: GRID_WIDTH,
+        height: GRID_HEIGHT,
+        extraHeight: NODE_EXTRA_HEIGHT,
+    };
+    const applyWidgetSize = (width, height) => {
+        widgetSize.width = Math.max(Math.round(width || GRID_WIDTH), MIN_WIDGET_WIDTH);
+        widgetSize.height = Math.max(Math.round(height || GRID_HEIGHT), MIN_WIDGET_HEIGHT);
+        root.style.width = `${widgetSize.width}px`;
+        root.style.height = `${widgetSize.height}px`;
+    };
+    const applyNodeResize = (size = node.size) => {
+        applyWidgetSize(
+            (size?.[0] || GRID_WIDTH + NODE_WIDTH_PADDING) - NODE_WIDTH_PADDING,
+            (size?.[1] || GRID_HEIGHT + widgetSize.extraHeight) - widgetSize.extraHeight
+        );
+    };
+    applyWidgetSize(GRID_WIDTH, GRID_HEIGHT);
 
     const toolbar = document.createElement("div");
     toolbar.className = "lvs-toolbar";
 
     const clearButton = createIconButton("Clear selection", "x");
+    const batchUploadButton = createIconButton("Batch import thumbnails", "↑");
     const selectAllButton = createIconButton("Select all visible LoRAs", "all");
     const folderSelect = document.createElement("select");
     folderSelect.className = "lvs-folder";
@@ -450,7 +785,7 @@ function createInlineGallery(node) {
 
     const refreshButton = createIconButton("Refresh LoRA list", "r");
     const countButton = createIconButton("Selected count", "0");
-    toolbar.append(clearButton, selectAllButton, folderSelect, searchWrap, refreshButton, countButton);
+    toolbar.append(clearButton, batchUploadButton, selectAllButton, folderSelect, searchWrap, refreshButton, countButton);
 
     const grid = document.createElement("div");
     grid.className = "lvs-grid";
@@ -466,6 +801,7 @@ function createInlineGallery(node) {
         grid,
         items: [],
         selectedSet: new Set(getSelected(node)),
+        selectedPrompts: getSelectedPrompts(node),
         query: "",
         folder: "",
         countButton,
@@ -500,10 +836,19 @@ function createInlineGallery(node) {
         grid.appendChild(reloading);
         try {
             state.items = await fetchItems(force);
+            for (const item of state.items) {
+                const workflowPrompt = state.selectedPrompts.get(item.name);
+                if (workflowPrompt && !item.prompt) {
+                    item.prompt = workflowPrompt;
+                }
+                if (item.prompt) {
+                    state.selectedPrompts.set(item.name, item.prompt);
+                }
+            }
             updateFolderOptions();
             const validNames = new Set(state.items.map((item) => item.name));
             state.selectedSet = new Set([...state.selectedSet].filter((name) => validNames.has(name)));
-            saveSelected(node, [...state.selectedSet]);
+            saveSelected(node, [...state.selectedSet], state.items, state.selectedPrompts);
             countButton.textContent = String(state.selectedSet.size);
             renderGrid(state);
         } catch (error) {
@@ -531,14 +876,15 @@ function createInlineGallery(node) {
     });
     clearButton.addEventListener("click", () => {
         state.selectedSet.clear();
-        saveSelected(node, []);
+        saveSelected(node, [], state.items, state.selectedPrompts);
         rerender();
     });
+    batchUploadButton.addEventListener("click", () => batchUploadThumbnails(state));
     selectAllButton.addEventListener("click", () => {
         for (const item of getVisibleItems(state)) {
             state.selectedSet.add(item.name);
         }
-        saveSelected(node, [...state.selectedSet]);
+        saveSelected(node, [...state.selectedSet], state.items, state.selectedPrompts);
         rerender();
     });
     refreshButton.addEventListener("click", () => reload(true));
@@ -546,51 +892,33 @@ function createInlineGallery(node) {
         const widget = node.addDOMWidget("lora_gallery", "lora_gallery", root, {
             serialize: false,
             hideOnZoom: false,
+            getMinHeight: () => MIN_WIDGET_HEIGHT,
+            getHeight: () => widgetSize.height,
         });
-        
-        // Dynamic size computation based on node size
-        widget.computeSize = function(width) {
-            // Calculate available space for the widget
-            const nodeWidth = node.size[0] || GRID_WIDTH + 28;
-            const nodeHeight = node.size[1] || GRID_HEIGHT + 130;
-            
-            // Reserve space for other widgets (inputs, sliders, etc.)
-            const widgetWidth = Math.max(nodeWidth - 28, 400);
-            const widgetHeight = Math.max(nodeHeight - 130, 300);
-            
-            // Update root element size to match computed size
-            root.style.width = widgetWidth + "px";
-            root.style.height = widgetHeight + "px";
-            
-            return [widgetWidth, widgetHeight];
-        };
-        
-        // Hook into node resize to update widget dimensions
+        widget.serialize = false;
+        widget.computeSize = () => [widgetSize.width, widgetSize.height];
+        widget.computeLayoutSize = () => ({
+            minHeight: MIN_WIDGET_HEIGHT,
+            minWidth: MIN_WIDGET_WIDTH,
+        });
+        if (typeof node.computeSize === "function") {
+            const computedSize = node.computeSize();
+            widgetSize.extraHeight = Math.max(NODE_EXTRA_HEIGHT, Math.round((computedSize?.[1] || 0) - widgetSize.height));
+        }
+
         const originalOnResize = node.onResize;
-        node.onResize = function(size) {
+        node.onResize = function (size) {
             const result = originalOnResize?.apply(this, arguments);
-            
-            // Recompute widget size when node is resized
-            if (widget.computeSize) {
-                const [w, h] = widget.computeSize(size[0]);
-                root.style.width = w + "px";
-                root.style.height = h + "px";
-            }
-            
+            applyNodeResize(size);
+            this.setDirtyCanvas?.(true, true);
             return result;
         };
-        
-        // Initial size update
-        if (widget.computeSize) {
-            const [w, h] = widget.computeSize(node.size[0]);
-            root.style.width = w + "px";
-            root.style.height = h + "px";
-        }
     } else {
         node.addWidget("button", "LoRA Gallery unavailable", null, () => reload(true));
     }
 
     setTimeout(() => reload(false), 0);
+    setTimeout(() => syncNodeLayout(node, widgetSize), 0);
     return root;
 }
 
@@ -609,8 +937,6 @@ app.registerExtension({
             hideWidgetByName(this, "empty_behavior");
             createInlineGallery(this);
 
-            // Set initial size and make it resizable
-            this.size = [GRID_WIDTH + 28, GRID_HEIGHT + 130];
             this.resizable = true;
             
             return result;
